@@ -1,0 +1,28 @@
+name: geosteering
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  # Kern-Infrastruktur
+  - python=3.10
+  - pip
+
+  # Jupyter & Entwicklung
+  - jupyter
+  - ipykernel
+
+  # Data Science & Machine Learning Basis (Versionen ähnlich zu Kaggle)
+  - pandas
+  - numpy<2.0.0 # Wichtig: NumPy 2.x bricht aktuell noch manche ML-Pakete
+  - scikit-learn
+
+  # Visualisierung & Utilities
+  - matplotlib
+  - seaborn
+  - tqdm
+
+  # Deep Learning: PyTorch mit GPU (CUDA 12.1) Support
+  - pytorch
+  - pytorch-cuda=12.1
