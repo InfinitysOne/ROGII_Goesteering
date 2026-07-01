@@ -1,10 +1,8 @@
 import os
-import torch
+
 import numpy as np
 import pandas as pd
-from pyexpat import features
-
-from sympy.core.random import sample
+import torch
 from torch.utils.data import Dataset
 
 class GeosteeringDataset(Dataset):
@@ -27,8 +25,11 @@ class GeosteeringDataset(Dataset):
         for well_id in well_ids:
             horiz_path = os.path.join(data_dir, f"{well_id}__horizontal_well.csv")
 
+            horiz_path = os.path.normpath(horiz_path)
+
             # skip if datai do not exist
             if not os.path.exists(horiz_path):
+                print(f"No data for {well_id} found. -> {horiz_path}")
                 continue
 
             df = pd.read_csv(horiz_path)
