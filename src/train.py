@@ -39,7 +39,7 @@ def train_model():
         running_loss = 0.0
 
         # tqdm shows a progress bar
-        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}")
+        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}", colour="green")
 
         for batch_idx, (x_batch, y_batch) in enumerate(tqdm(progress_bar)):
             # Move data to the device
