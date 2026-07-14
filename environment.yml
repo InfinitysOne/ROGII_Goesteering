@@ -8,6 +8,11 @@ dependencies:
   # Kern-Infrastruktur
   - python=3.10
   - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      - torch
+      - torchvision
+      - torchaudio
 
   # Jupyter & Entwicklung
   - jupyter
@@ -24,5 +29,5 @@ dependencies:
   - tqdm
 
   # Deep Learning: PyTorch mit GPU (CUDA 12.1) Support
-  - pytorch
-  - pytorch-cuda=12.1
+ # - pytorch
+ # - pytorch-cuda=12.1
