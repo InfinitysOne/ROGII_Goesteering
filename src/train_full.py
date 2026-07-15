@@ -122,7 +122,7 @@ def train_full_model():
         # Wenn der Fehler auf den unbekannten Daten kleiner geworden ist, speichern wir!
         if val_rmse < best_val_rmse:
             best_val_rmse = val_rmse
-            torch.save(model.state_dict(), "../models/best_geosteering_model.pth")
+            torch.save(model.state_dict(), "../src/models/best_geosteering_model.pth")
             print(f"    🌟 Neues bestes Modell gespeichert! (Val RMSE verbessert)")
 
     print(f"\nTraining komplett! Bestes Modell hatte einen Val RMSE von {best_val_rmse:.2f} ft.")
