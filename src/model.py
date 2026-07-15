@@ -69,7 +69,7 @@ class GeosteeringHybridModel(nn.Module):
         # 4. Pass through the final linear layers
         tvt_prediction = self.fc(last_time_step) # Shape: (Batch_Size, 1)
 
-        return tvt_prediction.squeeze()
+        return tvt_prediction.squeeze(-1)
 
 if __name__ == "__main__":
     dummy_input = torch.randn(32, 2, 50)

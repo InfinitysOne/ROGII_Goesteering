@@ -20,6 +20,9 @@ class GeosteeringDataset(Dataset):
         self.is_test = is_test
         self.samples = []
 
+        self.tvt_mean = 11000.0
+        self.tvt_std = 2000.0
+
         print(f"Loading {len(well_ids)} borehole for {'Test' if is_test else 'Training'}-Set . . .")
 
         for well_id in well_ids:
@@ -37,21 +40,23 @@ class GeosteeringDataset(Dataset):
             # 1. pre-processing: Fill holes in Gamma Ray (Forward Fill & Backward Fill)
             df['GR'] = df['GR'].ffill().bfill()
 
-            # 2. define variables
-            if not self.is_test:
-                # column 'TVT' is Ground Truth in our Training
-                # filter rows/columns if no TVT is there
-                df = df.dropna(subset=['TVT']).reset_index(drop=True)
-                targets = df['TVT'].values
-            else:
-                # generate empty targets so we can predict them in the test-set
-                targets = np.zeros(len(df))
-
-            # 3. choose features (start with GR and depth of Z)
+            # 2. choose features (start with GR and depth of Z)
             features = df[['GR', 'Z']].values
 
             features[:, 0] = features[:, 0] / 150.0  # GR 0 to 150
             features[:, 1] = features[:, 1] / 10000.0  # -8000 to -10,000
+
+            # 3. define variables
+            if not self.is_test:
+                # column 'TVT' is Ground Truth in our Training
+                # filter rows/columns if no TVT is there
+                df = df.dropna(subset=['TVT']).reset_index(drop=True)
+                raw_targets = df["TVT"].values
+                targets = (raw_targets - self.tvt_mean) / self.tvt_std
+            else:
+                # generate empty targets so we can predict them in the test-set
+                targets = np.zeros(len(df))
+
 
             # 4. Sliding Windows generation
             for i in range(len(features) - window_size):

@@ -41,7 +41,7 @@ def train_model():
         # tqdm shows a progress bar
         progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}", colour="green")
 
-        for batch_idx, (x_batch, y_batch) in enumerate(tqdm(progress_bar)):
+        for batch_idx, (x_batch, y_batch) in enumerate(progress_bar):
             # Move data to the device
             x_batch, y_batch = x_batch.to(device), y_batch.to(device)
 
@@ -63,10 +63,10 @@ def train_model():
             # Progress bar tracking
             progress_bar.set_postfix({'Batch_RMSE': f"{current_rmse:.2f}"})
 
-            # Calculate the average RMSE for the epoch
-            epoch_mse = running_loss / len(train_loader)
-            epoch_rmse = np.sqrt(epoch_mse)
-            print(f"--> Epoch {epoch+1} | Average RMSE: {epoch_rmse:.2f} ft\n")
+        # Calculate the average RMSE for the epoch
+        epoch_mse = running_loss / len(train_loader)
+        epoch_rmse = np.sqrt(epoch_mse)
+        print(f"--> Epoch {epoch+1} | Average RMSE: {epoch_rmse:.2f} ft\n")
 
         torch.save(model.state_dict(), "../src/models/baseline_geosteering_model.pth")
         print("Training completed! Model saved in 'models' ")
