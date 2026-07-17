@@ -11,3 +11,11 @@ dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 x_batch, y_batch = next(iter(dataloader))
 print(f"X Tensor Shape: {x_batch.shape} -> (Batch_Size, Features, Window_Size)")
 print(f"Y Tensor Shape: {y_batch.shape} -> (Batch_Size)")
+
+
+import torch
+print("CUDA verfügbar:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    print("Gefundene GPU:", torch.cuda.get_device_name(0))
+else:
+    print("Leider immer noch CPU :(")
