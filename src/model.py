@@ -64,7 +64,11 @@ class GeosteeringHybridModel(nn.Module):
         lstm_out, (hidden, cell) = self.lstm(x_lstm_in)
 
         # We only need the last timestep of the LSTM output
-        last_time_step = lstm_out[:, -1, :] # Shape: (Batch_Size, 128)
+        # hidden[-2] is the forward direction's final state (seen the whole
+        # window left-to-right); hidden[-1] is the backward direction's final
+        # state (seen the whole window right-to-left). Concatenating these two
+        # gives full context from both directions.
+        last_time_step = torch.cat([hidden[-2], hidden[-1]], dim=1) # Shape: (Batch_Size, 128)
 
         # 4. Pass through the final linear layers
         tvt_prediction = self.fc(last_time_step) # Shape: (Batch_Size, 1)
