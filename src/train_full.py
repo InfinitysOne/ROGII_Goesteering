@@ -3,12 +3,9 @@ import glob
 import json
 import csv
 import random
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from statsmodels.multivariate import factor
-from torch.ao.pruning import scheduler
 from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
@@ -38,7 +35,9 @@ def train_full_model():
     EPOCHS = 30  # Mehr Epochen, da wir jetzt echte Validierung haben
     LEARNING_RATE = 0.001
     WINDOW_SIZE = 50
-    EARLY_STOP_PATIENCE = 7 # stop if val RMSE doesn't improve for this many epochs
+    SCHEDULER_PATIENCE = 3
+    EARLY_STOP_PATIENCE = 15 # stop if val RMSE doesn't improve for this many epochs
+    EARYLY_STOP_MIN_DELTA = 0.5 # ft, ignore improvements smaller than this as noise
 
     set_seed(SEED)
 
@@ -95,7 +94,7 @@ def train_full_model():
     model = GeosteeringHybridModel(num_features=2, window_size=WINDOW_SIZE).to(device)
     criterion = nn.MSELoss()
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=SCHEDULER_PATIENCE)
 
     best_val_rmse = float('inf')  # Startet unendlich hoch
     epochs_no_improvement = 0
@@ -120,7 +119,7 @@ def train_full_model():
         model.train()
         train_running_loss = 0.0
 
-        train_bar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{EPOCHS} [TRAIN]", colour='green')
+        train_bar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{EPOCHS} [TRAIN]\n", colour='green')
 
         for x_batch, y_batch in train_bar:
             x_batch, y_batch = x_batch.to(device), y_batch.to(device)
@@ -157,6 +156,8 @@ def train_full_model():
         current_lr = optimizer.param_groups[0]['lr']
         print(f"--> Epoche {epoch + 1} | Train RMSE: {train_rmse:.2f} ft | Val RMSE: {val_rmse:.2f} ft")
 
+        # Step the LR scheduler on validation RMSE: once val RMSE plateaus,
+        # shrink the LR instead of continuing to overshoot with a fixed step size.
         scheduler.step(val_rmse)
 
         with open(log_path, "a", newline="") as f:
@@ -166,8 +167,8 @@ def train_full_model():
         # ---------------------------------------------------------
         # Wenn der Fehler auf den unbekannten Daten kleiner geworden ist, speichern wir!
         if val_rmse < best_val_rmse:
+            improvement = best_val_rmse -val_rmse
             best_val_rmse = val_rmse
-            epochs_no_improvement = 0
             torch.save(model.state_dict(), checkpoint_path)
 
             with open(norm_stats_path, "w", newline="") as f:
@@ -179,12 +180,16 @@ def train_full_model():
                     "window_size": WINDOW_SIZE,
                 }, f, indent=2)
             print(f"Neues bestes Modell gespeichert! (Val RMSE verbessert)")
-        else:
-            epochs_no_improvement += 1
-            if epochs_no_improvement >= EARLY_STOP_PATIENCE:
-                print(f"\n Keine Verbesserung seit {EARLY_STOP_PATIENCE} Epochen - stoppe frühzeitig, "
-                      f"um Overfitting/Rechenzeit zu vermeiden")
-                break
+
+            if improvement >= EARYLY_STOP_MIN_DELTA:
+                epochs_no_improvement = 0
+            else:
+                epochs_no_improvement += 1
+
+        if epochs_no_improvement >= EARLY_STOP_PATIENCE:
+            print(f"\nKeine wesentliche Verbesserung seit {EARLY_STOP_PATIENCE} Epochen — stoppe frühzeitig, "
+                  f"um Overfitting/Rechenzeit zu vermeiden.")
+            break
 
     print(f"\nTraining komplett! Bestes Modell hatte einen Val RMSE von {best_val_rmse:.2f} ft.")
 
