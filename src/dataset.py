@@ -6,8 +6,8 @@ import torch
 from torch.utils.data import Dataset
 
 class GeosteeringDataset(Dataset):
-    def __init__(self, well_ids, data_dir, window_size=50, is_test=False,
-                 gr_norm = 150.0, z_norm = 10000.0, tvt_mean = None, tvt_std = None):
+    def __init__(self, well_ids, data_dir, window_size=50, is_test=False, use_relative_z=False,
+                 gr_mean = None, gr_std = None, z_mean = None, z_std = None, tvt_mean = None, tvt_std = None):
         """
         Pytorch Dataset for ROGII Geosteering dataset.
 
@@ -24,24 +24,28 @@ class GeosteeringDataset(Dataset):
         """
         self.window_size = window_size
         self.is_test = is_test
+        self.use_relative_z = use_relative_z
         self.samples = []
-
-        self.gr_norm = gr_norm
-        self.z_norm = z_norm
 
         print(f"Loading {len(well_ids)} borehole for {'Test' if is_test else 'Training'}-Set . . .")
 
-        if tvt_mean is None or tvt_std is None:
+        if None in (tvt_mean, tvt_std, gr_mean, gr_std, z_mean, z_std):
             if is_test:
                 raise ValueError(
-                    "tvt_mean/tvt_std must be passed explicitly for a test dataset "
+                    "All mean/std parameters must be passed explicitly for a validation/test dataset "
                     "(reuse the values computed on the training set)."
                 )
-            tvt_mean, tvt_std = self._compute_tvt_stats(well_ids, data_dir)
-            print(f"Computed TVT stats from training wells: mean={tvt_mean}, std={tvt_std}")
+            stats = self._compute_global_stats(well_ids, data_dir, use_relative_z)
+            tvt_mean, tvt_std, gr_mean, gr_std, z_mean, z_std = stats
 
-        self.tvt_mean = tvt_mean
-        self.tvt_std = tvt_std
+            print("Computed global stats from training wells:")
+            print(f"  TVT: mean={tvt_mean:.2f}, std={tvt_std:.2f}")
+            print(f"  GR:  mean={gr_mean:.2f}, std={gr_std:.2f}")
+            print(f"  Z:   mean={z_mean:.2f}, std={z_std:.2f}")
+
+        self.tvt_mean, self.tvt_std = tvt_mean, tvt_std
+        self.gr_mean, self.gr_std = gr_mean, gr_std
+        self.z_mean, self.z_std = z_mean, z_std
 
         for well_id in well_ids:
             horiz_path = os.path.join(data_dir, f"{well_id}__horizontal_well.csv")
@@ -57,6 +61,11 @@ class GeosteeringDataset(Dataset):
 
             # 1. pre-processing: Fill holes in Gamma Ray (Forward Fill & Backward Fill)
             df['GR'] = df['GR'].ffill().bfill()
+            df['Z'] = df['Z'].ffill().bfill()
+
+            # Relative Tiefe anwenden (Startwert auf 0 setzen)
+            if self.use_relative_z:
+                df['Z'] = df['Z'] - df['Z'].iloc[0]
 
             # 2. Drop rows without ground truth before slicing features, so that
             #    'features' and 'targets' are always build from the exact same rows.
@@ -64,19 +73,19 @@ class GeosteeringDataset(Dataset):
                 df = df.dropna(subset=['TVT']).reset_index(drop=True)
 
             # 3. choose features (start with GR and depth of Z)
-            features = df[['GR', 'Z']].values
+            features = df[['GR', 'Z']].values.astype(np.float32)
 
-            features[:, 0] = features[:, 0] / self.gr_norm  # GR 0 to 150
-            features[:, 1] = features[:, 1] / self.z_norm  # -8000 to -10,000
+            features[:, 0] = (features[:, 0] - self.gr_mean) / self.gr_std  # GR 0 to 150
+            features[:, 1] = (features[:, 1] - self.z_mean) / self.z_std  # -8000 to -10,000
 
             # 4. define targets
             if not self.is_test:
                 # column 'TVT' is Ground Truth in our Training
-                raw_targets = df["TVT"].values
+                raw_targets = df["TVT"].values.astype(np.float32)
                 targets = (raw_targets - self.tvt_mean) / self.tvt_std
             else:
                 # generate empty targets so we can predict them in the test-set
-                targets = np.zeros(len(df))
+                targets = np.zeros(len(df), dtype=np.float32)
 
             # Guard rail: catch any future regression bug
             assert len(features) == len(targets), (
@@ -98,22 +107,38 @@ class GeosteeringDataset(Dataset):
                 })
 
     @staticmethod
-    def _compute_tvt_stats(well_ids, data_dir):
-        """ First-pass scan over the given wells' TVT columns to compute the actual mean/std to normalize
-        against"""
-        all_tvt = []
+    def _compute_global_stats(well_ids, data_dir, use_relative_z):
+        """Scans all training wells to compute the true mean and std for TVT, GR, and Z."""
+        all_tvt, all_gr, all_z = [], [], []
+
         for well_id in well_ids:
             horizon_path = os.path.normpath(os.path.join(data_dir, f"{well_id}__horizontal_well.csv"))
             if not os.path.exists(horizon_path):
                 continue
-            df = pd.read_csv(horizon_path, usecols=lambda c: c == "TVT")
-            all_tvt.append(df['TVT'].dropna().values)
+
+            df = pd.read_csv(horizon_path)
+            df['GR'] = df['GR'].ffill().bfill()
+            df['Z'] = df['Z'].ffill().bfill()
+
+            if use_relative_z:
+                df['Z'] = df['Z'] - df['Z'].iloc[0]
+
+            if 'TVT' in df.columns:
+                all_tvt.append(df['TVT'].dropna().values)
+            all_gr.append(df['GR'].values)
+            all_z.append(df['Z'].values)
         all_tvt = np.concatenate(all_tvt) if all_tvt else np.array([0.0])
-        mean = float(np.mean(all_tvt))
-        std = float(np.std(all_tvt))
-        if std == 0:
-            std = 1.0 # avoid division by zero on degenerate inputs
-        return mean, std
+        all_gr = np.concatenate(all_gr) if all_gr else np.array([0.0])
+        all_z = np.concatenate(all_z) if all_z else np.array([0.0])
+
+        def get_mean_std(arr):
+            std = float(np.std(arr))
+            return float(np.mean(arr)), std if std > 0 else 1.0
+        tvt_mean, tvt_std = get_mean_std(all_tvt)
+        gr_mean, gr_std = get_mean_std(all_gr)
+        z_mean, z_std = get_mean_std(all_z)
+
+        return tvt_mean, tvt_std, gr_mean, gr_std, z_mean, z_std
 
     def __len__(self):
         """ Returns how many training samples we have """

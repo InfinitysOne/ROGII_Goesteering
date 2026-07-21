@@ -79,10 +79,12 @@ def train_full_model():
     # We then pass those exact values into the validation dataset so both splits
     # are scaled identically and val statistics never leak into normalization
     train_dataset = GeosteeringDataset(well_ids=train_wells, data_dir=data_dir, window_size=WINDOW_SIZE)
-    val_dataset = GeosteeringDataset(
-        well_ids=val_wells, data_dir=data_dir, window_size=WINDOW_SIZE,
-        gr_norm=train_dataset.gr_norm, z_norm=train_dataset.z_norm,
-        tvt_std=train_dataset.tvt_std, tvt_mean=train_dataset.tvt_mean,
+    val_dataset = GeosteeringDataset(well_ids=val_wells,
+        data_dir=data_dir,
+        window_size=WINDOW_SIZE,
+        gr_mean=train_dataset.gr_mean, gr_std=train_dataset.gr_std,
+        z_mean=train_dataset.z_mean, z_std=train_dataset.z_std,
+        tvt_mean=train_dataset.tvt_mean, tvt_std=train_dataset.tvt_std
     )
 
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
@@ -119,7 +121,7 @@ def train_full_model():
         model.train()
         train_running_loss = 0.0
 
-        train_bar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{EPOCHS} [TRAIN]\n", colour='green')
+        train_bar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{EPOCHS} [TRAIN] ", colour='green')
 
         for x_batch, y_batch in train_bar:
             x_batch, y_batch = x_batch.to(device), y_batch.to(device)
@@ -154,7 +156,7 @@ def train_full_model():
         val_rmse = np.sqrt(val_mse) * tvt_std
 
         current_lr = optimizer.param_groups[0]['lr']
-        print(f"--> Epoche {epoch + 1} | Train RMSE: {train_rmse:.2f} ft | Val RMSE: {val_rmse:.2f} ft")
+        print(f"\n --> Epoche {epoch + 1} | Train RMSE: {train_rmse:.2f} ft | Val RMSE: {val_rmse:.2f} ft")
 
         # Step the LR scheduler on validation RMSE: once val RMSE plateaus,
         # shrink the LR instead of continuing to overshoot with a fixed step size.
@@ -173,11 +175,14 @@ def train_full_model():
 
             with open(norm_stats_path, "w", newline="") as f:
                 json.dump({
-                    "gr_norm": train_dataset.gr_norm,
-                    "z_norm": train_dataset.z_norm,
+                    "gr_mean": train_dataset.gr_mean,
+                    "gr_std": train_dataset.gr_std,
+                    "z_mean": train_dataset.z_mean,
+                    "z_std": train_dataset.z_std,
                     "tvt_mean": train_dataset.tvt_mean,
                     "tvt_std": train_dataset.tvt_std,
                     "window_size": WINDOW_SIZE,
+                    "use_relative_z": train_dataset.use_relative_z
                 }, f, indent=2)
             print(f"Neues bestes Modell gespeichert! (Val RMSE verbessert)")
 
