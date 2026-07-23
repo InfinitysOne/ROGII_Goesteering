@@ -12,12 +12,12 @@ class GeosteeringHybridModel(nn.Module):
         self.cnn = nn.Sequential(
             # Layer 1: Finds patterns in GR and Z-Signal
             nn.Conv1d(in_channels=num_features, out_channels=16, kernel_size=3, padding=1),
-            nn.ReLU(),
+            nn.GELU(),
             nn.MaxPool1d(kernel_size=2), # slicing into half of the sequence
 
             # Layer 2: combines easy patterns to a more complex geology feature
             nn.Conv1d(in_channels=16, out_channels=32, kernel_size=3, padding=1),
-            nn.ReLU(),
+            nn.GELU(),
             nn.MaxPool1d(kernel_size=2),
         )
 
@@ -39,7 +39,7 @@ class GeosteeringHybridModel(nn.Module):
         # Since we have bidirectional=True, the output of the LSTM is doubled (64 * 2 = 128)
         self.fc = nn.Sequential(
             nn.Linear(in_features=128, out_features=64),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Dropout(p=0.2), # Dropout to reduce overfitting
             nn.Linear(in_features=64, out_features=1), # Output : prediction of TVT
         )
