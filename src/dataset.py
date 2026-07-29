@@ -52,7 +52,7 @@ class GeosteeringDataset(Dataset):
 
             horiz_path = os.path.normpath(horiz_path)
 
-            # skip if datai do not exist
+            # skip if data do not exist
             if not os.path.exists(horiz_path):
                 print(f"No data for {well_id} found. -> {horiz_path}")
                 continue
@@ -63,14 +63,13 @@ class GeosteeringDataset(Dataset):
             df['GR'] = df['GR'].ffill().bfill()
             df['Z'] = df['Z'].ffill().bfill()
 
-            # Relative Tiefe anwenden (Startwert auf 0 setzen)
+            # Apply relative depth (set start value to 0)
             if self.use_relative_z:
                 df['Z'] = df['Z'] - df['Z'].iloc[0]
 
-            # 2. Drop rows without ground truth before slicing features, so that
-            #    'features' and 'targets' are always build from the exact same rows.
-            if not self.is_test:
-                df = df.dropna(subset=['TVT']).reset_index(drop=True)
+            # 2. Extract features and targets without dropping NaNs yet
+            #    This preserves the true spatial sequence of the borehole.
+            #    We will filter out windows with missing targets later.
 
             # 3. choose features (start with GR and depth of Z)
             features = df[['GR', 'Z']].values.astype(np.float32)
@@ -94,12 +93,17 @@ class GeosteeringDataset(Dataset):
             )
 
             # 5. Sliding Windows generation
-            for i in range(len(features) - window_size):
+            # +1 ensures we don't skip the very last possible window
+            for i in range(len(features) - window_size + 1):
                 # X is sequenz of the last 'windows_size' Meter
                 X_window = features[i : i + window_size]
 
                 # y is the TVT the end of this exact window
                 y_target = targets[i + window_size - 1]
+
+                # If training/val, skip windows where the target TVT is missing
+                if not self.is_test and np.isnan(y_target):
+                    continue
 
                 self.samples.append({
                     'x': X_window,

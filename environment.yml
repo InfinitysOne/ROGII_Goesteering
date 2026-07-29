@@ -3,20 +3,22 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  # Kern-Infrastruktur
   - python=3.10
   - pip
-
-  # Jupyter & Entwicklung
+  # Jupyter Notebook
   - jupyter
   - ipykernel
-
-  # Data Science & Machine Learning Basis
+  # Data Science ML
   - pandas
   - numpy<2.0.0
   - scikit-learn
-
-  # Visualisierung & Utilities
+  # Visualization
   - matplotlib
   - seaborn
   - tqdm
+  # GPU Support
+  - pip:
+      - --index-url https://download.pytorch.org/whl/cu130
+      - torch
+      - torchvision
+      - torchaudio

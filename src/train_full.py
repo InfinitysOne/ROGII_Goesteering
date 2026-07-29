@@ -1,19 +1,20 @@
-import os
+import csv
 import glob
 import json
-import csv
+import os
 import random
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split
+from torch.utils.data import DataLoader
 from tqdm import tqdm
-import numpy as np
 
-# Unsere eigenen Module
 from dataset import GeosteeringDataset
 from model import GeosteeringHybridModel
+
 
 def set_seed(seed: int):
     """Seed every source of randomness we control, so re-running this script
@@ -31,49 +32,49 @@ def train_full_model():
     # 1. Setup & Hyperparameter
     # ---------------------------------------------------------
     SEED = 42
-    BATCH_SIZE = 256  # Größerer Batch für schnelleres Training
-    EPOCHS = 30  # Mehr Epochen, da wir jetzt echte Validierung haben
-    LEARNING_RATE = 0.001
-    WINDOW_SIZE = 50
-    SCHEDULER_PATIENCE = 3
+    BATCH_SIZE = 128
+    EPOCHS = 30
+    LEARNING_RATE = 0.0005
+    WINDOW_SIZE = 100
+    SCHEDULER_PATIENCE = 5
     EARLY_STOP_PATIENCE = 15 # stop if val RMSE doesn't improve for this many epochs
-    EARYLY_STOP_MIN_DELTA = 0.5 # ft, ignore improvements smaller than this as noise
+    EARYLY_STOP_MIN_DELTA = 0.05 # ft, ignore improvements smaller than this as noise
 
     set_seed(SEED)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Starte vollständiges Training auf Gerät: {device}")
+    print(f"Starting full training on device: {device}")
 
     # ---------------------------------------------------------
-    # 2. Alle Bohrloch-IDs automatisch finden
+    # 2. Automatically find all well IDs
     # ---------------------------------------------------------
-    # os.path.normpath behebt unsere alten Windows-Slash-Probleme
+    # os.path.normpath fixes our old Windows slash issues
     data_dir = os.path.normpath("../data/train")
 
-    # Sucht alle CSVs, die auf __horizontal_well.csv enden
+    # Searches for all CSVs ending in __horizontal_well.csv
     csv_files = glob.glob(os.path.join(data_dir, "*__horizontal_well.csv"))
 
     all_wells = []
     for file in csv_files:
-        # Extrahiert z.B. "fc0d20b2" aus dem ganzen Dateipfad
+        # Extracts e.g. "fc0d20b2" from the full file path
         filename = os.path.basename(file)
         well_id = filename.split("__")[0]
         all_wells.append(well_id)
 
-    print(f"Insgesamt {len(all_wells)} Bohrlöcher im Trainingsordner gefunden.")
+    print(f"Found a total of {len(all_wells)} wells in the training folder.")
 
     # ---------------------------------------------------------
     # 3. Train / Validation Split (80% / 20%)
     # ---------------------------------------------------------
-    # WICHTIG: Wir splitten nach Bohrloch-IDs, NICHT nach einzelnen Zeilen!
-    # So garantieren wir, dass das Modell im Val-Set komplett neue Geologie sieht.
+    # IMPORTANT: We split by well IDs, NOT by individual rows!
+    # This guarantees that the model sees completely new geology in the val set.
     train_wells, val_wells = train_test_split(all_wells, test_size=0.2, random_state=SEED)
 
-    print(f"Trainings-Set: {len(train_wells)} Bohrlöcher")
-    print(f"Validation-Set: {len(val_wells)} Bohrlöcher")
+    print(f"Training set: {len(train_wells)} wells")
+    print(f"Validation set: {len(val_wells)} wells")
 
     # ---------------------------------------------------------
-    # 4. Datasets & DataLoaders erstellen
+    # 4. Create Datasets & DataLoaders
     # ---------------------------------------------------------
     # tvt_mean/tvt_std are computed from the TRAINING wells only
     # We then pass those exact values into the validation dataset so both splits
@@ -91,16 +92,16 @@ def train_full_model():
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
     # ---------------------------------------------------------
-    # 5. Modell, Loss und Optimizer
+    # 5. Model, Loss, and Optimizer
     # ---------------------------------------------------------
     model = GeosteeringHybridModel(num_features=2, window_size=WINDOW_SIZE).to(device)
     criterion = nn.MSELoss()
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=SCHEDULER_PATIENCE)
 
-    best_val_rmse = float('inf')  # Startet unendlich hoch
+    best_val_rmse = float('inf')  # Starts infinitely high
     epochs_no_improvement = 0
-    tvt_std = train_dataset.tvt_std  # Wir brauchen das, um den Fehler zurückzurechnen
+    tvt_std = train_dataset.tvt_std  # We need this to back-calculate the error
 
     model_dir = "../src/models"
     os.makedirs(model_dir, exist_ok=True)
@@ -114,7 +115,7 @@ def train_full_model():
         csv.writer(f).writerow(["epoch", "train_rmse_ft", "val_rmse_ft", "lr"])
 
     # ---------------------------------------------------------
-    # 6. Die Haupt-Schleife
+    # 6. The Main Loop
     # ---------------------------------------------------------
     for epoch in range(EPOCHS):
         # --- TRAINING ---
@@ -136,15 +137,15 @@ def train_full_model():
 
         train_mse = train_running_loss / len(train_loader)
 
-        # RÜCKRECHNUNG: Wurzel ziehen und mit Standardabweichung multiplizieren,
-        # damit wir den echten Fehler in Fuß (ft) sehen!
+        # BACK-CALCULATION: Take the square root and multiply by the standard deviation,
+        # so we can see the real error in feet (ft)!
         train_rmse = np.sqrt(train_mse) * tvt_std
 
         # --- VALIDATION ---
         model.eval()
         val_running_loss = 0.0
 
-        with torch.no_grad():  # Keine Gradienten berechnen
+        with torch.no_grad():  # Do not compute gradients
             val_bar = tqdm(val_loader, desc=f"Epoch {epoch + 1}/{EPOCHS} [VAL]", colour='blue')
             for x_batch, y_batch in val_bar:
                 x_batch, y_batch = x_batch.to(device), y_batch.to(device)
@@ -156,7 +157,7 @@ def train_full_model():
         val_rmse = np.sqrt(val_mse) * tvt_std
 
         current_lr = optimizer.param_groups[0]['lr']
-        print(f"\n --> Epoche {epoch + 1} | Train RMSE: {train_rmse:.2f} ft | Val RMSE: {val_rmse:.2f} ft")
+        print(f"\n --> Epoch {epoch + 1} | Train RMSE: {train_rmse:.2f} ft | Val RMSE: {val_rmse:.2f} ft")
 
         # Step the LR scheduler on validation RMSE: once val RMSE plateaus,
         # shrink the LR instead of continuing to overshoot with a fixed step size.
@@ -165,11 +166,12 @@ def train_full_model():
         with open(log_path, "a", newline="") as f:
             csv.writer(f).writerow([epoch +1, f"{train_rmse:.4f}", f"{val_rmse:.4f}", f"{current_lr:.6f}"])
         # ---------------------------------------------------------
-        # 7. Model Checkpointing (Bestes Modell speichern)
+        # 7. Model Checkpointing & Early Stopping
         # ---------------------------------------------------------
-        # Wenn der Fehler auf den unbekannten Daten kleiner geworden ist, speichern wir!
+        improvement = best_val_rmse - val_rmse
+        
+        # If the error on unseen data has decreased, we save it!
         if val_rmse < best_val_rmse:
-            improvement = best_val_rmse -val_rmse
             best_val_rmse = val_rmse
             torch.save(model.state_dict(), checkpoint_path)
 
@@ -184,19 +186,19 @@ def train_full_model():
                     "window_size": WINDOW_SIZE,
                     "use_relative_z": train_dataset.use_relative_z
                 }, f, indent=2)
-            print(f"Neues bestes Modell gespeichert! (Val RMSE verbessert)")
+            print(f"New best model saved! (Val RMSE improved)")
 
-            if improvement >= EARYLY_STOP_MIN_DELTA:
-                epochs_no_improvement = 0
-            else:
-                epochs_no_improvement += 1
+        if improvement >= EARYLY_STOP_MIN_DELTA:
+            epochs_no_improvement = 0
+        else:
+            epochs_no_improvement += 1
 
         if epochs_no_improvement >= EARLY_STOP_PATIENCE:
-            print(f"\nKeine wesentliche Verbesserung seit {EARLY_STOP_PATIENCE} Epochen — stoppe frühzeitig, "
-                  f"um Overfitting/Rechenzeit zu vermeiden.")
+            print(f"\nNo significant improvement for {EARLY_STOP_PATIENCE} epochs — stopping early, "
+                  f"to avoid overfitting and save computation time.")
             break
 
-    print(f"\nTraining komplett! Bestes Modell hatte einen Val RMSE von {best_val_rmse:.2f} ft.")
+    print(f"\nTraining complete! Best model had a Val RMSE of {best_val_rmse:.2f} ft.")
 
 
 if __name__ == "__main__":
