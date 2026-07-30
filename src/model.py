@@ -42,7 +42,7 @@ class GeosteeringHybridModel(nn.Module):
         self.fc = nn.Sequential(
             nn.Linear(in_features=256, out_features=128),
             nn.GELU(),
-            nn.Dropout(p=0.3), # Dropout to reduce overfitting
+            nn.Dropout(p=0.5), # Dropout to reduce overfitting
             nn.Linear(in_features=128, out_features=1), # Output : prediction of TVT
         )
 

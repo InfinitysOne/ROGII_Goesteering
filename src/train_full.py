@@ -96,28 +96,50 @@ def train_full_model():
     # ---------------------------------------------------------
     model = GeosteeringHybridModel(num_features=2, window_size=WINDOW_SIZE).to(device)
     criterion = nn.MSELoss()
-    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
+    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=0.05)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=SCHEDULER_PATIENCE)
 
     best_val_rmse = float('inf')  # Starts infinitely high
     epochs_no_improvement = 0
+    start_epoch = 0
     tvt_std = train_dataset.tvt_std  # We need this to back-calculate the error
 
     model_dir = "../src/models"
     os.makedirs(model_dir, exist_ok=True)
     checkpoint_path = os.path.join(model_dir, "best_geosteering_model.pth")
+    resume_path    = os.path.join(model_dir, "resume_checkpoint.pth")
     norm_stats_path = os.path.join(model_dir, "normalization_stats.json")
     log_path = os.path.join(model_dir, "training_log.csv")
 
+    # ---------------------------------------------------------
+    # 5b. Resume from checkpoint if one exists
+    # ---------------------------------------------------------
+    if os.path.exists(resume_path):
+        print(f"\nResume checkpoint found — loading '{resume_path}'...")
+        ckpt = torch.load(resume_path, map_location=device)
+        model.load_state_dict(ckpt["model_state"])
+        optimizer.load_state_dict(ckpt["optimizer_state"])
+        scheduler.load_state_dict(ckpt["scheduler_state"])
+        start_epoch          = ckpt["epoch"]           # next epoch to run
+        best_val_rmse        = ckpt["best_val_rmse"]
+        epochs_no_improvement = ckpt["epochs_no_improvement"]
+        print(f"Resuming from epoch {start_epoch + 1}/{EPOCHS}  "
+              f"(best val RMSE so far: {best_val_rmse:.2f} ft)\n")
+        # Append to the existing log instead of overwriting it
+        log_mode = "a"
+    else:
+        log_mode = "w"
+
     # Persist per-epoch metrics to disk, so training curves
     # and epoch-by-epoch numbers survive past the console/tqdm scrollback
-    with open(log_path, "w", newline="") as f:
-        csv.writer(f).writerow(["epoch", "train_rmse_ft", "val_rmse_ft", "lr"])
+    with open(log_path, log_mode, newline="") as f:
+        if log_mode == "w":  # only write header for a fresh run
+            csv.writer(f).writerow(["epoch", "train_rmse_ft", "val_rmse_ft", "lr"])
 
     # ---------------------------------------------------------
     # 6. The Main Loop
     # ---------------------------------------------------------
-    for epoch in range(EPOCHS):
+    for epoch in range(start_epoch, EPOCHS):
         # --- TRAINING ---
         model.train()
         train_running_loss = 0.0
@@ -164,7 +186,18 @@ def train_full_model():
         scheduler.step(val_rmse)
 
         with open(log_path, "a", newline="") as f:
-            csv.writer(f).writerow([epoch +1, f"{train_rmse:.4f}", f"{val_rmse:.4f}", f"{current_lr:.6f}"])
+            csv.writer(f).writerow([epoch + 1, f"{train_rmse:.4f}", f"{val_rmse:.4f}", f"{current_lr:.6f}"])
+
+        # Save full training state so we can resume from this exact epoch later.
+        # This overwrites the previous resume checkpoint each epoch.
+        torch.save({
+            "epoch":                epoch + 1,      # next epoch to run on resume
+            "model_state":          model.state_dict(),
+            "optimizer_state":      optimizer.state_dict(),
+            "scheduler_state":      scheduler.state_dict(),
+            "best_val_rmse":        best_val_rmse,
+            "epochs_no_improvement": epochs_no_improvement,
+        }, resume_path)
         # ---------------------------------------------------------
         # 7. Model Checkpointing & Early Stopping
         # ---------------------------------------------------------
