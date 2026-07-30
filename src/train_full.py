@@ -1,3 +1,4 @@
+import argparse
 import csv
 import glob
 import json
@@ -27,7 +28,7 @@ def set_seed(seed: int):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-def train_full_model():
+def train_full_model(resume: bool = False):
     # ---------------------------------------------------------
     # 1. Setup & Hyperparameter
     # ---------------------------------------------------------
@@ -35,7 +36,7 @@ def train_full_model():
     BATCH_SIZE = 128
     EPOCHS = 30
     LEARNING_RATE = 0.0005
-    WINDOW_SIZE = 100
+    WINDOW_SIZE = 50
     SCHEDULER_PATIENCE = 5
     EARLY_STOP_PATIENCE = 15 # stop if val RMSE doesn't improve for this many epochs
     EARYLY_STOP_MIN_DELTA = 0.05 # ft, ignore improvements smaller than this as noise
@@ -112,21 +113,26 @@ def train_full_model():
     log_path = os.path.join(model_dir, "training_log.csv")
 
     # ---------------------------------------------------------
-    # 5b. Resume from checkpoint if one exists
+    # 5b. Resume from checkpoint if --resume flag was passed
     # ---------------------------------------------------------
-    if os.path.exists(resume_path):
-        print(f"\nResume checkpoint found — loading '{resume_path}'...")
-        ckpt = torch.load(resume_path, map_location=device)
-        model.load_state_dict(ckpt["model_state"])
-        optimizer.load_state_dict(ckpt["optimizer_state"])
-        scheduler.load_state_dict(ckpt["scheduler_state"])
-        start_epoch          = ckpt["epoch"]           # next epoch to run
-        best_val_rmse        = ckpt["best_val_rmse"]
-        epochs_no_improvement = ckpt["epochs_no_improvement"]
-        print(f"Resuming from epoch {start_epoch + 1}/{EPOCHS}  "
-              f"(best val RMSE so far: {best_val_rmse:.2f} ft)\n")
-        # Append to the existing log instead of overwriting it
-        log_mode = "a"
+    if resume:
+        if os.path.exists(resume_path):
+            print(f"\nResume checkpoint found — loading '{resume_path}'...")
+            ckpt = torch.load(resume_path, map_location=device)
+            model.load_state_dict(ckpt["model_state"])
+            optimizer.load_state_dict(ckpt["optimizer_state"])
+            scheduler.load_state_dict(ckpt["scheduler_state"])
+            start_epoch           = ckpt["epoch"]          # next epoch to run
+            best_val_rmse         = ckpt["best_val_rmse"]
+            epochs_no_improvement = ckpt["epochs_no_improvement"]
+            print(f"Resuming from epoch {start_epoch + 1}/{EPOCHS}  "
+                  f"(best val RMSE so far: {best_val_rmse:.2f} ft)\n")
+            # Append to the existing log instead of overwriting it
+            log_mode = "a"
+        else:
+            print(f"\n[WARNING] --resume was set but no checkpoint found at '{resume_path}'. "
+                  f"Starting from scratch.\n")
+            log_mode = "w"
     else:
         log_mode = "w"
 
@@ -233,6 +239,20 @@ def train_full_model():
 
     print(f"\nTraining complete! Best model had a Val RMSE of {best_val_rmse:.2f} ft.")
 
+    # Clean up the resume checkpoint so a future plain run always starts fresh.
+    # The file is intentionally kept on disk only when training was interrupted.
+    if os.path.exists(resume_path):
+        os.remove(resume_path)
+        print("Resume checkpoint deleted — next run will start from scratch.")
+
 
 if __name__ == "__main__":
-    train_full_model()
+    parser = argparse.ArgumentParser(description="Train the full Geosteering model.")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume training from the last saved resume checkpoint. "
+             "If omitted, training always starts from scratch.",
+    )
+    args = parser.parse_args()
+    train_full_model(resume=args.resume)
