@@ -1,10 +1,22 @@
 {
-  "gr_mean": 88.37197262437826,
-  "gr_std": 23.47621122950059,
-  "z_mean": -9379.078995950811,
-  "z_std": 634.2401575966342,
-  "tvt_mean": 11492.89305007537,
-  "tvt_std": 637.5371038898802,
-  "window_size": 50,
-  "use_relative_z": false
+  "zrel_mean": -4.969344443992983,
+  "zrel_std": 15.963991488644936,
+  "dz_mean": -0.10371540267841309,
+  "dz_std": 0.2805712423142082,
+  "window_size": 100,
+  "jitter_ft": 25.0,
+  "type_half_range": 50.0,
+  "type_len": 128,
+  "target": "typewell_registration_v2_per_signal_norm",
+  "gr_normalization": "per_signal_robust_median_iqr",
+  "features_horizontal": [
+    "GR",
+    "Z_rel_window_start",
+    "dZ"
+  ],
+  "features_typewell": [
+    "GR_excerpt",
+    "position"
+  ],
+  "baseline_anchored_rmse_ft": 107.24242731090592
 }

@@ -1,0 +1,185 @@
+\documentclass[12pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{setspace}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{listings}
+\usepackage{color}
+\usepackage{booktabs}
+
+\usepackage{xurl}
+
+\emergencystretch=3em
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2
+}
+\lstset{style=mystyle}
+
+\title{\textbf{ROGII Wellbore Geology Prediction: Automating Geosteering with Deep Learning}}
+\author{Project Documentation}
+\date{\today}
+
+\begin{document}
+
+    \maketitle
+    \tableofcontents
+    \newpage
+
+    \section{Abstract}
+    The oil and gas industry is continuously seeking methods to optimize drilling operations, reduce operational costs, and maximize hydrocarbon recovery. One of the most critical processes in horizontal drilling is \textit{geosteering}---the practice of adjusting the trajectory of a drill bit in real-time to remain within a targeted geological reservoir. The ROGII Wellbore Geology Prediction Kaggle competition aims to automate this complex task using machine learning. This project documentation outlines the development of a hybrid deep learning model consisting of a 1D Convolutional Neural Network (1D-CNN) and a Bidirectional Long Short-Term Memory (BiLSTM) network. Rather than regressing True Vertical Thickness (TVT) directly --- a formulation that proved unlearnable from horizontal logs alone --- the final model solves the task the way a human geosteerer does: it \textit{correlates} the real-time horizontal Gamma Ray (GR) log against the reference GR signature of the type well. Concretely, the network receives the recent horizontal log window together with a typewell excerpt centered on the current TVT estimate, and predicts the registration correction that aligns the estimate with the true stratigraphic position. During inference, the wellbore is navigated sequentially through blind zones: a dead-reckoning prior ($\Delta \text{TVT} = -\Delta Z$) is re-registered against the type well at every step, yielding a self-correcting estimate that snaps back to ground truth at every known tie-in point.
+
+    \section{Introduction}
+
+    \subsection{Background and Motivation}
+    Horizontal drilling requires immense precision. Subsurface geological layers can be highly variable, featuring sudden faults, dips, and structural shifts. Traditionally, human geosteerers analyze sensory logs, such as Gamma Ray (GR), to correlate the current drill bit position with known type wells, adjusting the True Vertical Thickness (TVT) stratigraphy. This manual correlation is slow, prone to cognitive fatigue, and dependent on the individual expertise of the geosteerer. Automating this correlation represents a significant leap forward. By providing a machine learning model capable of accurately predicting the TVT ahead of the drill bit or in areas with signal loss, we can greatly reduce the reaction time during drilling operations, keep the wellbore within the optimal "pay zone" longer, and prevent hazardous drilling incidents.
+
+    \subsection{Project Scope}
+    The primary objective of this project is to build an robust sequence-to-sequence regression model that ingests sequential GR and Z logs and outputs the corresponding TVT.
+    The project addresses several core challenges:
+    \begin{itemize}
+        \item \textbf{Missing Data Imputation}: Managing gaps and "blind" stretches where sensory data is unavailable or noisy.
+        \item \textbf{Continuous Spatial Dependencies}: Designing a sequence extraction method that honors the physical and continuous nature of a borehole.
+        \item \textbf{High Variance Normalization}: Establishing robust statistical scaling to ensure gradients remain stable across vastly different wells.
+        \item \textbf{Deep Learning Architecture}: Designing a hybrid model capable of extracting local spatial features while maintaining a long-term memory of the geological sequence.
+    \end{itemize}
+
+    \section{Data Pipeline and Preprocessing}
+
+    \subsection{Dataset Overview}
+    The dataset provided by the competition is structured around multiple wellbores, containing both horizontal drilling logs and vertical type wells. Each wellbore is associated with two primary CSV files: the horizontal well and the type well.
+
+    \textbf{1. Horizontal Well Data (\texttt{<well\_id>\_\_horizontal\_well.csv}):}
+    This file represents the actual drilling trajectory and real-time sensory logs recorded along the Measured Depth (MD). Key columns include:
+    \begin{itemize}
+        \item \textbf{MD (Measured Depth)}: The actual length of the wellbore from the surface.
+        \item \textbf{X, Y, Z}: The spatial coordinates of the drill bit, where Z represents the absolute True Vertical Depth.
+        \item \textbf{GR (Gamma Ray)}: Real-time radioactivity logs used to identify lithologies.
+        \item \textbf{TVT (True Vertical Thickness)}: The continuous target variable during training, mapping the stratigraphy.
+        \item \textbf{TVT\_input}: Used during inference, representing sparse points of known TVT separated by "blind" gaps (NaNs) that require prediction.
+        \item Additional geological markers (e.g., ANCC, ASTNU, BUDA) representing estimated structural surfaces.
+    \end{itemize}
+
+    \textbf{2. Type Well Data (\texttt{<well\_id>\_\_typewell.csv}):}
+    This file provides the reference stratigraphy for the specific drilling area. It serves as the baseline ground truth for geological correlations. Key columns include:
+    \begin{itemize}
+        \item \textbf{TVT (True Vertical Thickness)}: The reference thickness scale.
+        \item \textbf{GR (Gamma Ray)}: The ideal Gamma Ray signature for the expected geological layers.
+        \item \textbf{Geology}: Annotations of specific geological formations or rock types.
+    \end{itemize}
+
+    While early iterations of this project ignored the type well and mapped the horizontal \texttt{GR} and \texttt{Z} logs directly to \texttt{TVT}, the final model uses the type well as a second, essential input: it is the reference against which the horizontal log is correlated, exactly as in manual geosteering.
+
+    \subsection{Missing Data Handling}
+    Before constructing the dataset, missing values (holes) within the sensory logs (GR and Z) are addressed using forward-fill and backward-fill algorithms. This ensures that the deep learning model receives continuous arrays of data. However, for the target variable (TVT), rows with missing targets are initially preserved to keep the spatial array contiguous. They are only filtered out dynamically during window generation, ensuring the CNN does not accidentally cross non-physical "jumps" in the depth data.
+
+    \subsection{Well-Invariant Feature Engineering}
+    An earlier iteration of this project fed the absolute depth $Z$ directly into the network and regressed the absolute TVT. Analysis of the normalization statistics revealed that $\sigma_Z \approx \sigma_{TVT}$, reflecting the near-linear per-well relationship $\text{TVT}(i) \approx c_{well} - Z(i)$. Given absolute $Z$, the network could therefore minimize training loss by memorizing the well-specific constant $c_{well}$ instead of learning geology from the Gamma Ray signal --- the root cause of the observed overfitting (low training error, poor generalization to unseen validation wells).
+
+    The final pipeline consequently uses only features that are invariant to the absolute position of the well:
+    \begin{itemize}
+        \item \textbf{GR}: the Gamma Ray log, globally standardized.
+        \item \textbf{$Z_{rel}$}: the depth relative to the start of the current window, $Z_{rel}(j) = Z(j) - Z(\text{window start})$, standardized with statistics computed over all training windows.
+        \item \textbf{$dZ$}: the first difference of $Z$ (local trajectory inclination), globally standardized.
+    \end{itemize}
+
+    \subsection{Registration Target Formulation}
+    Removing the memorization shortcuts exposed a deeper issue empirically: even with well-invariant features and an offset-free residual target, validation performance never surpassed the naive dead-reckoning baseline. The conclusion is that the horizontal logs alone underdetermine the problem --- the same GR pattern can occur at different stratigraphic depths. Human geosteerers resolve this ambiguity by correlating the horizontal log against the type well. The final formulation encodes exactly this task.
+
+    For each training window ending at a position with known true TVT $t$, a typewell GR excerpt is extracted on a fixed grid spanning $\pm 50$ ft, deliberately mis-centered at
+    \begin{equation}
+        c = t + j, \qquad j \sim \mathcal{U}(-J, J), \quad J = 25\,\text{ft},
+    \end{equation}
+    and the network must predict the normalized registration correction
+    \begin{equation}
+        y = \frac{t - c}{J} = -\frac{j}{J} \in [-1, 1].
+    \end{equation}
+    The trajectory channels carry no information about the artificial jitter $j$, so the loss can only be reduced by genuinely matching the horizontal GR signal against the typewell signature --- the network is structurally forced to learn correlation. For the validation split, per-sample jitters are drawn once with a fixed seed, so the validation loss measures the identical set of registration problems every epoch.
+
+    \subsection{Typewell Excerpt Extraction}
+    The type well provides GR as a function of TVT on a fine, monotonic grid. Excerpts are linearly interpolated onto a fixed grid of 128 samples spanning $\pm 50$ ft around the center $c$ (values outside the typewell coverage are clamped to the edge). The excerpt has two channels: the typewell GR --- normalized with the \textit{same} statistics as the horizontal GR, so amplitudes are directly comparable across branches --- and a position channel (grid offset scaled to $[-1, 1]$) that tells the network where each sample sits relative to the center.
+
+    \subsection{Normalization Strategy}
+    Global statistics (Mean and Standard Deviation) for GR, $Z_{rel}$, and $dZ$ are computed strictly over the training wells to prevent data leakage.
+    \begin{equation}
+        x_{scaled} = \frac{x_{raw} - \mu_{train}}{\sigma_{train}}
+    \end{equation}
+    By keeping these statistics fixed, we ensure that both validation and hidden test wells are normalized under the exact same regime, preventing systemic offset errors. The statistics and the task configuration (window size, jitter magnitude, excerpt range and resolution) are persisted to \texttt{normalization\_stats.json} alongside the model checkpoint and re-used verbatim during inference.
+
+    \subsection{Data Augmentation}
+    To discourage memorization of individual GR traces, the horizontal GR channel of every training window is augmented with a freshly sampled combination of (i) Gaussian noise ($\sigma = 0.05$ in normalized GR units), (ii) a random multiplicative gain drawn uniformly from $[0.9, 1.1]$, and (iii) a random constant offset ($\sigma = 0.1$). Gain and offset specifically destroy the per-well GR "fingerprint" (absolute level and amplitude of the log), which the network could otherwise exploit to identify training wells, while the geological shape of the signal is preserved. The typewell excerpt additionally receives light Gaussian noise. The registration jitter itself (freshly sampled each epoch for the training split) is the strongest augmentation of all: every window is paired with an effectively new registration problem every time it is seen. Augmentation is applied to the training split only.
+
+    \subsection{Sliding Window Generation}
+    Given the sequential nature of drilling, samples are generated by a rolling window over the horizontal log: each sample consists of the window \texttt{(3, 100)} ending at position $i$, the typewell excerpt \texttt{(2, 128)} centered at $t_i + j$, and the normalized correction target $-j/J$. Windows whose end position has no ground-truth TVT are skipped during training and validation.
+
+    \section{Model Architecture}
+
+    The selected architecture is a \textbf{two-branch Hybrid CNN-BiLSTM} registration network: one branch encodes what the bit has recently drilled through, the other encodes what the reference stratigraphy looks like around the current estimate, and a fusion head compares the two.
+
+    \subsection{Horizontal Branch (CNN + BiLSTM)}
+    The horizontal branch ingests the $(\text{GR}, Z_{rel}, dZ)$ window of shape $(3, 100)$. A 1D-CNN (32 and 64 feature maps, each Conv1D followed by GroupNorm, GELU, and MaxPool1D) extracts local log signatures; GroupNorm is used instead of BatchNorm because neighboring sliding windows overlap heavily, making batch statistics strongly correlated. The condensed feature sequence is fed into a two-layer Bidirectional LSTM (128 hidden units per direction, dropout 0.2 between layers), and the full output sequence is aggregated by concatenated mean- and max-pooling into a 512-dimensional representation.
+
+    \subsection{Typewell Branch (CNN)}
+    The typewell branch ingests the $(\text{GR}, \text{position})$ excerpt of shape $(2, 128)$. A lighter 1D-CNN (32 and 64 feature maps, kernel size 5, GroupNorm, GELU, MaxPool1D) followed by concatenated mean- and max-pooling produces a 128-dimensional representation of the local reference stratigraphy. The position channel preserves the spatial relation of each pattern to the excerpt center through the pooling stages.
+
+    \subsection{Fusion Head}
+    The two representations are concatenated ($512 + 128 = 640$) and passed through a dense head ($640 \rightarrow 128$, GELU, Dropout $0.3$) with a final linear layer outputting the normalized registration correction.
+
+    \section{Training Methodology}
+
+    \subsection{Data Splitting}
+    To accurately measure generalization, the dataset was split at the \textbf{wellbore level} (80\% train, 20\% validation), rather than randomly splitting rows. This strict isolation guarantees that the model evaluates its performance on entirely unseen geological topologies.
+
+    \subsection{Optimization and Loss}
+    The model is trained using the \textbf{AdamW} optimizer with an initial learning rate of $10^{-4}$ and a weight decay of $0.01$, combined with gradient norm clipping at 1.0. The objective function is the Mean Squared Error (MSE) loss on the normalized registration correction; multiplying the RMSE by $J = 25$ ft converts it into a physically interpretable correction error in feet.
+
+    \subsection{Anchored Validation Metric and Baselines}
+    Model selection is driven by an \textbf{anchored validation RMSE} that reproduces the competition setting. Crucially, the training wells themselves contain a \texttt{TVT\_input} column with the competition's own known/blind structure; inspection showed that real blind zones can span the majority of a well (e.g., 71\% for one training well, over 4{,}000 ft), far longer than an arbitrary simulated split. The validation therefore uses each well's \textit{own} \texttt{TVT\_input} mask to define the blind zone whenever it is usable, falling back to masking the last 30\% of the well only when no such mask exists. The well is then navigated by the exact same sequential procedure as deployed inference (Section 6.1), and the RMSE is computed over the blind samples only --- the same samples the leaderboard scores. The learning rate scheduler, checkpointing, and early stopping monitor this metric.
+
+    Two baselines calibrate the numbers. (i) The anchored RMSE of \textbf{pure dead reckoning} (correction $\equiv 0$ at every step), computed once before training --- the flat-stratigraphy heuristic every model must beat. Under realistic blind-zone lengths this baseline is substantially weaker than under short simulated ones (structural dip accumulates over thousands of feet), which is precisely the headroom the registration model is meant to exploit. (ii) The window-level RMSE of always predicting zero correction against uniform jitter, $J/\sqrt{3} \approx 14.4$ ft --- the number the validation correction RMSE must undercut before the model demonstrably registers anything. Every epoch's anchored RMSE is reported relative to baseline (i).
+
+    \subsection{Learning Rate Scheduling and Early Stopping}
+    A \texttt{ReduceLROnPlateau} scheduler shrinks the learning rate by a factor of 0.5 if the anchored validation RMSE stagnates for 5 epochs. If no improvement greater than 0.05 ft is registered for 15 consecutive epochs, training is halted, and the best weights are retained.
+
+    \section{Inference and Post-Processing}
+
+    \subsection{Sequential Blind-Zone Navigation}
+    Inference walks each test well from start to end. At every row where \texttt{TVT\_input} is known, the estimate snaps to the ground truth (re-anchoring). Inside blind stretches, each step consists of a dead-reckoning prior
+    \begin{equation}
+        \hat{t}_{prior}(i) = \hat{t}(i-1) - \big(Z(i) - Z(i-1)\big),
+    \end{equation}
+    followed by re-registration: the typewell excerpt is centered on the prior, the model predicts the correction, and the estimate becomes $\hat{t}(i) = \hat{t}_{prior}(i) + c$ with the correction \textbf{clipped} to $c \in [-J, J]$. The clipping guarantees that a single ambiguous match --- local stratigraphic self-similarity makes roughly half of all naive window matches ambiguous on real data --- can never throw the estimate out of the excerpt range in one step. Because the estimate is re-registered against the reference stratigraphy at every step, errors do not accumulate freely as they would under pure dead reckoning --- the navigation is self-correcting as long as the local GR signature is informative. A leading blind stretch (before the first known tie-in) is filled by reverse dead reckoning from the first known point. The navigation routine is implemented once (\texttt{navigate\_well}) and shared verbatim between the anchored validation during training and the inference notebook, so the validation number measures precisely the deployed behavior.
+
+    \subsection{Relation to Tie-In Anchoring}
+    The earlier pipeline applied anchoring as a post-hoc constant shift to a batch of independent predictions. In the final design, anchoring is woven into the navigation itself: every known \texttt{TVT\_input} point resets the estimate exactly, and the registration corrections keep the estimate aligned in between.
+
+    \section{Results and Conclusion}
+    The project's decisive insight emerged from systematically removing memorization shortcuts: absolute depth as a feature, the well-specific offset in the target, and finally the per-well GR fingerprint. Each removal was validated by an honest, competition-matched anchored metric --- and once all shortcuts were closed, performance collapsed to the dead-reckoning baseline, proving that horizontal logs alone underdetermine the geosteering problem. The final architecture resolves this by reformulating the task as typewell registration: a two-branch CNN-BiLSTM network that correlates the horizontal GR window against the reference stratigraphy and predicts the correction that aligns the running TVT estimate, deployed inside a sequential, self-correcting navigation loop with exact re-anchoring at known tie-in points. This mirrors the actual workflow of human geosteerers. Future work could include richer correlation mechanisms (e.g., explicit cross-correlation layers or attention between the two branches), additional sensory logs (such as resistivity or porosity), and wider stratigraphic context via larger excerpt ranges or Transformer-based architectures.
+
+\end{document}
