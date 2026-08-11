@@ -2,6 +2,8 @@
 
 This project automates the geosteering process using a Hybrid Deep Learning model (1D-CNN + BiLSTM). It predicts the True Vertical Thickness (TVT) of geological formations in real-time based on sensory data, specifically Gamma Ray (GR) and Absolute Depth (Z).
 
+**🏆 Competition Link:** [ROGII Wellbore Geology Prediction on Kaggle](https://www.kaggle.com/competitions/rogii-wellbore-geology-prediction)
+
 ## 🚀 Getting Started
 
 ### 1. Prerequisites & Environment Setup
@@ -16,7 +18,6 @@ conda env create -f environment.yml
 # Activate the environment
 conda activate geosteering
 ```
-
 This will automatically install Python 3.10, PyTorch (with CUDA support), Pandas, Numpy, Scikit-Learn, Jupyter, and other necessary libraries.
 
 ### 2. Project Structure
@@ -49,6 +50,8 @@ Once you have trained the model, you can test it on unseen data and visualize th
 3. Run all cells. 
    - This notebook will load the trained model and normalization statistics.
    - It will predict the missing TVT gaps ("blind stretches") in the test wells.
+   - Post-Processing: It automatically applies a Tie-In Anchoring Algorithm to align the model's 
+   relative predictions perfectly with the last known physical TVT ground truth, preventing spatial drift.
    - It will save matplotlib plots for each well in the `notebooks/img/` folder.
    - Finally, it will generate a `submission.csv` file for Kaggle.
 
@@ -57,4 +60,4 @@ Once you have trained the model, you can test it on unseen data and visualize th
 - **BiLSTM Block**: Reads the CNN feature sequences bidirectionally to form a robust contextual understanding of the geological stratigraphy.
 - **Fully Connected Head**: Outputs the continuous scalar prediction for the True Vertical Thickness.
 
-For an in-depth understanding of the preprocessing pipeline, missing data handling, and normalization strategy, please refer to the `documentation.tex` file!
+For an in-depth understanding of the preprocessing pipeline, missing data handling, and normalization strategy, please refer to the `Grand_Challenges.pdf` file!
