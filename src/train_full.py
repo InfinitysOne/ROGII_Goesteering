@@ -96,7 +96,8 @@ def train_full_model(resume: bool = False):
     # 5. Model, Loss, and Optimizer
     # ---------------------------------------------------------
     model = GeosteeringHybridModel(num_features=2, window_size=WINDOW_SIZE).to(device)
-    criterion = nn.MSELoss()
+    criterion = nn.HuberLoss()  # to train with MSE, use nn.MSELoss()
+    metric_mse = nn.MSELoss()
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=0.05)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=SCHEDULER_PATIENCE)
 
@@ -148,7 +149,7 @@ def train_full_model(resume: bool = False):
     for epoch in range(start_epoch, EPOCHS):
         # --- TRAINING ---
         model.train()
-        train_running_loss = 0.0
+        train_running_mse = 0.0
 
         train_bar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{EPOCHS} [TRAIN] ", colour='green')
 
@@ -159,29 +160,32 @@ def train_full_model(resume: bool = False):
             predictions = model(x_batch)
             loss = criterion(predictions, y_batch)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
-            train_running_loss += loss.item()
+            with torch.no_grad():
+                mse = metric_mse(predictions, y_batch)
+                train_running_mse += mse.item()
 
-        train_mse = train_running_loss / len(train_loader)
-
+        train_mse = train_running_mse / len(train_loader)
         # BACK-CALCULATION: Take the square root and multiply by the standard deviation,
         # so we can see the real error in feet (ft)!
         train_rmse = np.sqrt(train_mse) * tvt_std
 
         # --- VALIDATION ---
         model.eval()
-        val_running_loss = 0.0
+        val_running_mse = 0.0
 
         with torch.no_grad():  # Do not compute gradients
             val_bar = tqdm(val_loader, desc=f"Epoch {epoch + 1}/{EPOCHS} [VAL]", colour='blue')
             for x_batch, y_batch in val_bar:
                 x_batch, y_batch = x_batch.to(device), y_batch.to(device)
                 predictions = model(x_batch)
-                loss = criterion(predictions, y_batch)
-                val_running_loss += loss.item()
 
-        val_mse = val_running_loss / len(val_loader)
+                mse = metric_mse(predictions, y_batch)
+                val_running_mse += mse.item()
+
+        val_mse = val_running_mse / len(val_loader)
         val_rmse = np.sqrt(val_mse) * tvt_std
 
         current_lr = optimizer.param_groups[0]['lr']
